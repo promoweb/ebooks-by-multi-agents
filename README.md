@@ -115,7 +115,11 @@ Crea un file `.env` nella root del progetto:
 # OpenAI API
 OPENAI_API_KEY=sk-your-openai-key-here
 
-# Oppure DashScope (per modelli Qwen)
+# Bailian (Alibaba Cloud Coding Plan / OpenClaw)
+# Endpoint: https://coding-intl.dashscope.aliyuncs.com/v1
+BAILIAN_API_KEY=your-bailian-api-key-here
+
+# Oppure DashScope Legacy (per modelli Qwen con API nativa)
 DASHSCOPE_API_KEY=your-dashscope-key-here
 ```
 
@@ -124,9 +128,11 @@ Oppure esporta le variabili:
 ```bash
 # Linux/Mac
 export OPENAI_API_KEY="sk-your-openai-key-here"
+export BAILIAN_API_KEY="your-bailian-api-key-here"
 
 # Windows PowerShell
 $env:OPENAI_API_KEY="sk-your-openai-key-here"
+$env:BAILIAN_API_KEY="your-bailian-api-key-here"
 ```
 
 ---
@@ -164,10 +170,22 @@ python ebooks.py \
     --output "libro_educazione.md"
 ```
 
+### Utilizzo con Bailian (Coding Plan / OpenClaw)
+
+```bash
+# Esempio con Bailian (raccomandato per modelli Alibaba Cloud)
+python ebooks.py \
+    --topic "Machine Learning Avanzato" \
+    --pages 300 \
+    --provider bailian \
+    --model "qwen3.5-plus" \
+    --context "./knowledge_base"
+```
+
 ### Utilizzo con Endpoint Personalizzati
 
 ```bash
-# Esempio con DashScope (compatibile OpenAI)
+# Esempio con endpoint OpenAI-compatibile personalizzato
 python ebooks.py \
     --topic "Machine Learning Avanzato" \
     --pages 300 \
@@ -180,7 +198,14 @@ python ebooks.py \
 ### Esempi Avanzati
 
 ```bash
-# Libro breve con provider Qwen nativo
+# Libro breve con provider Bailian (modelli qwen3.5-plus)
+python ebooks.py \
+    --topic "Introduzione a Python" \
+    --pages 150 \
+    --provider bailian \
+    --model "qwen3.5-plus"
+
+# Libro con provider Qwen nativo (legacy)
 python ebooks.py \
     --topic "Introduzione a Python" \
     --pages 150 \
@@ -218,11 +243,28 @@ python ebooks.py \
 
 Supporta qualsiasi provider con API compatibile OpenAI:
 
-- **OpenAI** (GPT-4, GPT-3.5)
-- **DashScope** (Qwen, Kimi)
-- **Azure OpenAI**
-- **LocalAI** (modelli locali)
-- **Altro** (qualsiasi endpoint `/v1/chat/completions`)
+| Provider | Tipo | Endpoint | Modelli |
+|----------|------|----------|---------|
+| **OpenAI** | Nativo | https://api.openai.com/v1 | GPT-4, GPT-3.5-turbo |
+| **Bailian** | OpenAI-compatible | https://coding-intl.dashscope.aliyuncs.com/v1 | qwen3.5-plus, kimi-k2.5, etc. |
+| **Azure OpenAI** | OpenAI-compatible | https://your-resource.openai.azure.com/ | GPT-4, GPT-3.5 |
+| **LocalAI** | OpenAI-compatible | http://localhost:8080/v1 | Modelli locali |
+| **Altro** | OpenAI-compatible | Custom | Qualsiasi endpoint `/v1/chat/completions` |
+
+#### Modelli Bailian (Coding Plan / OpenClaw)
+
+| Modello | Context Window | Max Tokens | Input | Ideale per |
+|---------|---------------|------------|-------|------------|
+| `qwen3.5-plus` | 1,000,000 | 65,536 | text, image | Generazione libri lunghi |
+| `qwen3-max-2026-01-23` | 262,144 | 65,536 | text | Qualità massima |
+| `qwen3-coder-next` | 262,144 | 65,536 | text | Codice e tecnico |
+| `qwen3-coder-plus` | 1,000,000 | 65,536 | text | Codice e libri tecnici |
+| `kimi-k2.5` | 262,144 | 32,768 | text, image | Generale purpose |
+| `MiniMax-M2.5` | 196,608 | 32,768 | text | Generale purpose |
+| `glm-5` | 202,752 | 16,384 | text | Generale purpose |
+| `glm-4.7` | 202,752 | 16,384 | text | Generale purpose |
+
+> **Nota**: Il provider `bailian` è raccomandato per l'uso con Alibaba Cloud Coding Plan/OpenClaw. Usa l'endpoint OpenAI-compatible `https://coding-intl.dashscope.aliyuncs.com/v1`.
 
 ### 📚 Knowledge Base RAG
 
@@ -287,9 +329,27 @@ BookWriterAI/
 | `--pages` | int | 400 | Numero pagine target |
 | `--output` | str | "book_output.md" | File output |
 | `--context` | str | None | Path Knowledge Base |
-| `--provider` | choice | "openai" | Provider AI |
-| `--model` | str | "gpt-4" | Modello specifico |
-| `--endpoint` | str | None | URL endpoint personalizzato |
+| `--provider` | choice | "openai" | Provider AI (`openai`, `bailian`, `qwen`) |
+| `--model` | str | "gpt-4" | Modello specifico (vedi tabella modelli) |
+| `--endpoint` | str | None | URL endpoint personalizzato (solo provider `openai`) |
+
+#### Provider Disponibili
+
+- **`openai`**: API OpenAI nativa o endpoint compatibile personalizzato
+- **`bailian`**: Alibaba Cloud Coding Plan/OpenClaw (raccomandato, endpoint OpenAI-compatible)
+- **`qwen`**: DashScope API nativa (legacy, per retrocompatibilità)
+
+#### Modelli per Provider
+
+**OpenAI:**
+- `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`
+
+**Bailian (Coding Plan):**
+- `qwen3.5-plus` (default), `qwen3-max-2026-01-23`, `qwen3-coder-next`, `qwen3-coder-plus`
+- `kimi-k2.5`, `MiniMax-M2.5`, `glm-5`, `glm-4.7`
+
+**Qwen (Legacy):**
+- `qwen-max`, `qwen-plus`, `qwen-turbo`
 
 ### Configurazione Avanzata (in codice)
 
@@ -317,7 +377,7 @@ config = Config(
 #### Errore: "API key non trovata"
 
 ```
-ValueError: API key non trovata. Imposta OPENAI_API_KEY o DASHSCOPE_API_KEY nel .env
+ValueError: API key non trovata. Imposta OPENAI_API_KEY, BAILIAN_API_KEY o DASHSCOPE_API_KEY nel .env
 ```
 
 **Soluzione:**
@@ -327,6 +387,23 @@ cat .env
 
 # Oppure esporta direttamente
 export OPENAI_API_KEY="sk-..."
+export BAILIAN_API_KEY="your-bailian-api-key-here"
+```
+
+#### Errore: "HTTP 401: Incorrect API key provided" (Bailian)
+
+**Cause possibili:**
+1. La chiave API potrebbe essere non valida, scaduta o formattata incorrettamente
+2. La chiave non corrisponde all'endpoint specificato
+3. La sottoscrizione potrebbe non essere attiva
+
+**Soluzione:**
+```bash
+# Verifica che stai usando la chiave corretta per Coding Plan
+# Ottieni una nuova chiave da: https://dashscope.aliyun.com/
+
+# Se usi DASHSCOPE_API_KEY come fallback per bailian, verifica che sia valida
+export BAILIAN_API_KEY="your-coding-plan-api-key-here"
 ```
 
 #### Errore: "PyPDF2 non installato"
@@ -483,7 +560,8 @@ Vuoi contribuire? Vedi la sezione [Contributi](#-contributi) per iniziare!
 ### Tecnologie Utilizzate
 
 - [OpenAI](https://openai.com/) - API GPT
-- [DashScope](https://dashscope.aliyun.com/) - API Qwen
+- [Bailian](https://dashscope.aliyun.com/) - Alibaba Cloud Coding Plan/OpenClaw
+- [DashScope](https://dashscope.aliyun.com/) - API Qwen (legacy)
 - [PyPDF2](https://pypi.org/project/PyPDF2/) - Parsing PDF
 - [TikToken](https://github.com/openai/tiktoken) - Tokenizzazione
 

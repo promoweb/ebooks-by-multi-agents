@@ -60,7 +60,7 @@ class Config:
     output_file: str = "book_output.md"
     checkpoint_dir: str = "checkpoints"
     context_path: Optional[str] = None  # Percorso alla cartella dei documenti di riferimento
-    provider: str = "openai"               # "openai" o "qwen"
+    provider: str = "openai"               # "openai", "qwen" o "bailian"
     model: str = "gpt-4"                   # modello da usare
     api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     endpoint: Optional[str] = None         # base_url personalizzato (solo per provider openai)
@@ -77,12 +77,15 @@ class Config:
     use_semantic_retrieval: bool = True      # Usa retrieval semantico se disponibile
 
     def __post_init__(self):
+        if self.provider == "bailian" and not self.api_key:
+            # Supporta sia BAILIAN_API_KEY che DASHSCOPE_API_KEY per retrocompatibilità
+            self.api_key = os.getenv("BAILIAN_API_KEY", "") or os.getenv("DASHSCOPE_API_KEY", "")
         if self.provider == "qwen" and not self.api_key:
             self.api_key = os.getenv("DASHSCOPE_API_KEY", "")
         if self.provider == "openai" and not self.api_key:
             self.api_key = os.getenv("OPENAI_API_KEY", "")
         if not self.api_key:
-            raise ValueError("API key non trovata. Imposta OPENAI_API_KEY o DASHSCOPE_API_KEY nel .env")
+            raise ValueError("API key non trovata. Imposta OPENAI_API_KEY, BAILIAN_API_KEY o DASHSCOPE_API_KEY nel .env")
 
 # ----------------------------------------------------------------------
 # Utilità per conteggio token (approssimato)
@@ -727,8 +730,15 @@ class BaseAgent:
             if self.config.endpoint:
                 client_kwargs["base_url"] = self.config.endpoint
             self.client = OpenAI(**client_kwargs)
+        elif self.config.provider == "bailian":
+            # Bailian (OpenClaw/Coding Plan) usa endpoint OpenAI-compatible
+            # Endpoint: https://coding-intl.dashscope.aliyuncs.com/v1
+            self.client = OpenAI(
+                api_key=self.config.api_key,
+                base_url="https://coding-intl.dashscope.aliyuncs.com/v1"
+            )
         elif self.config.provider == "qwen":
-            # Qwen usa l'API DashScope nativa
+            # Qwen usa l'API DashScope nativa (legacy)
             self.base_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
             self.headers = {
                 "Authorization": f"Bearer {self.config.api_key}",
@@ -742,7 +752,8 @@ class BaseAgent:
         retries = 3
         for attempt in range(retries):
             try:
-                if self.config.provider == "openai":
+                if self.config.provider in ["openai", "bailian"]:
+                    # Entrambi usano client OpenAI (bailian è OpenAI-compatible)
                     messages = []
                     if system_prompt:
                         messages.append({"role": "system", "content": system_prompt})
@@ -1036,10 +1047,10 @@ def main():
                         help="Numero di pagine desiderato (300-500)")
     parser.add_argument("--context", type=str, default=None,
                         help="Percorso alla cartella contenente documenti di riferimento (PDF, TXT, MD)")
-    parser.add_argument("--provider", choices=["openai", "qwen"], default="openai",
-                        help="Provider AI (openai per endpoint compatibili, qwen per DashScope nativo)")
+    parser.add_argument("--provider", choices=["openai", "qwen", "bailian"], default="openai",
+                        help="Provider AI (openai per endpoint compatibili, bailian per Coding Plan/OpenClaw, qwen per DashScope nativo)")
     parser.add_argument("--model", type=str, default=None,
-                        help="Modello specifico (es. gpt-4, qwen-max, kimi-k2.5). Se omesso usa default del provider")
+                        help="Modello specifico (es. gpt-4, qwen3.5-plus, kimi-k2.5). Se omesso usa default del provider")
     parser.add_argument("--endpoint", type=str, default=None,
                         help="Base URL personalizzato per API OpenAI-compatibile (es. https://coding-intl.dashscope.aliyuncs.com/v1)")
 
@@ -1049,7 +1060,9 @@ def main():
     if not args.model:
         if args.provider == "openai":
             args.model = "gpt-4"
-        else:
+        elif args.provider == "bailian":
+            args.model = "qwen3.5-plus"  # Default per Coding Plan/OpenClaw
+        else:  # qwen
             args.model = "qwen-max"
 
     config = Config(

@@ -158,21 +158,58 @@ python ebooks.py \
     --topic "Il futuro dell'educazione con l'IA" \
     --pages 400 \
     --context "/home/user/context" \
-    --provider openai \
-    --endpoint "https://coding-intl.dashscope.aliyuncs.com/v1" \
-    --model "kimi-k2.5"
+    --provider bailian \
+    --model "qwen3.5-plus"
 ```
+
+### Provider Supportati
+
+| Provider | Endpoint | Tipo API | Modelli |
+|----------|----------|----------|---------|
+| `openai` | https://api.openai.com/v1 | OpenAI nativa | gpt-4, gpt-3.5-turbo |
+| `bailian` | https://coding-intl.dashscope.aliyuncs.com/v1 | OpenAI-compatible | qwen3.5-plus, kimi-k2.5, etc. |
+| `qwen` | https://dashscope.aliyuncs.com/api/v1 | DashScope nativa | qwen-max (legacy) |
+
+### Modelli Bailian (Coding Plan/OpenClaw)
+
+| Modello | Context Window | Max Tokens | Input |
+|---------|---------------|------------|-------|
+| `qwen3.5-plus` | 1,000,000 | 65,536 | text, image |
+| `qwen3-max-2026-01-23` | 262,144 | 65,536 | text |
+| `qwen3-coder-next` | 262,144 | 65,536 | text |
+| `qwen3-coder-plus` | 1,000,000 | 65,536 | text |
+| `MiniMax-M2.5` | 196,608 | 32,768 | text |
+| `glm-5` | 202,752 | 16,384 | text |
+| `glm-4.7` | 202,752 | 16,384 | text |
+| `kimi-k2.5` | 262,144 | 32,768 | text, image |
 
 ### Parametri Config
 
 ```python
 @dataclass
 class Config:
-    context_path: Optional[str] = None          # Path alla cartella documenti
+    provider: str = "openai"                     # "openai", "bailian" o "qwen"
+    model: str = "gpt-4"                         # Modello specifico
+    api_key: str = ""                            # Chiave API
+    endpoint: Optional[str] = None               # URL personalizzato (solo openai)
+    context_path: Optional[str] = None           # Path alla cartella documenti
     chunk_size: int = 1000                       # Token per chunk
     chunk_overlap: int = 200                     # Token di sovrapposizione
     max_context_chunks: int = 5                  # Chunk max nel prompt
     use_semantic_retrieval: bool = True          # Usa retrieval semantico
+```
+
+### Variabili d'Ambiente
+
+```bash
+# OpenAI
+OPENAI_API_KEY=sk-your-openai-api-key-here
+
+# Bailian (Coding Plan/OpenClaw)
+BAILIAN_API_KEY=your-bailian-api-key-here
+
+# DashScope Legacy (fallback per bailian)
+DASHSCOPE_API_KEY=your-dashscope-api-key-here
 ```
 
 ## Estensione del Sistema
