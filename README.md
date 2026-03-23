@@ -476,11 +476,9 @@ Vedi il file [LICENSE](LICENSE) per il testo completo.
 
 ### Contributori
 
-Grazie a tutti i contributori che hanno reso questo progetto possibile:
+Grazie a tutti i contributori che hanno reso questo progetto possibile.
 
-<a href="https://github.com/username/BookWriterAI/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=username/BookWriterAI" alt="Contributors" />
-</a>
+Vuoi contribuire? Vedi la sezione [Contributi](#-contributi) per iniziare!
 
 ### Tecnologie Utilizzate
 
