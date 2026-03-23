@@ -1,0 +1,18 @@
+# Core dependencies (già presenti)
+openai>=1.0.0
+tiktoken>=0.5.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Knowledge Base dependencies - Document Parsing
+PyPDF2>=3.0.0          # Per il parsing di file PDF
+markdown>=3.5.0        # Per il parsing avanzato di Markdown (opzionale)
+
+# Note: Le dipendenze per PDF e Markdown sono opzionali.
+# Il sistema funzionerà anche senza, ma con supporto limitato ai formati.
+# 
+# Installazione completa:
+#   pip install -r requirements.txt
+#
+# Installazione minima (solo TXT):
+#   pip install openai>=1.0.0 tiktoken requests python-dotenv
