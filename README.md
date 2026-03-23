@@ -10,7 +10,7 @@
 BookWriterAI è un sistema avanzato di generazione di libri che utilizza un'architettura multi-agent per orchestrare la creazione di pubblicazioni complete. Il sistema supporta endpoint OpenAI-compatibili (inclusi OpenAI, DashScope, e altri provider) e include un modulo RAG (Retrieval-Augmented Generation) per arricchire il contenuto con documenti di riferimento.
 
 <p align="center">
-  <img src="https://via.placeholder.com/800x400?text=BookWriterAI+Architecture" alt="BookWriterAI Architecture">
+  <img src="assets/architecture.svg" alt="BookWriterAI Architecture" width="800">
 </p>
 
 ---

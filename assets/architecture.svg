@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f093fb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f5576c;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4facfe;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00f2fe;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#43e97b;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#38f9d7;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="800" height="500" fill="#f8fafc"/>
+  
+  <!-- Title -->
+  <text x="400" y="35" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#1e293b">
+    BookWriterAI Architecture
+  </text>
+  
+  <!-- Main Container -->
+  <rect x="20" y="55" width="760" height="430" rx="10" fill="white" stroke="#e2e8f0" stroke-width="2" filter="url(#shadow)"/>
+  
+  <!-- BookOrchestrator Header -->
+  <rect x="30" y="65" width="740" height="40" rx="5" fill="url(#grad1)"/>
+  <text x="400" y="92" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="white">
+    BookOrchestrator
+  </text>
+  
+  <!-- Knowledge Base System Container -->
+  <rect x="40" y="115" width="720" height="200" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+  <rect x="40" y="115" width="720" height="30" rx="8" fill="#334155"/>
+  <text x="400" y="136" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="white">
+    Knowledge Base System
+  </text>
+  
+  <!-- Document Loader -->
+  <rect x="60" y="160" width="130" height="60" rx="6" fill="url(#grad2)" filter="url(#shadow)"/>
+  <text x="125" y="185" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Document</text>
+  <text x="125" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Loader</text>
+  <text x="125" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="white" opacity="0.8">(Factory)</text>
+  
+  <!-- Arrow 1 -->
+  <path d="M 190 190 L 220 190" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+  
+  <!-- Document Parser -->
+  <rect x="230" y="160" width="130" height="60" rx="6" fill="url(#grad2)" filter="url(#shadow)"/>
+  <text x="295" y="185" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Document</text>
+  <text x="295" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Parser</text>
+  <text x="295" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="white" opacity="0.8">(Strategy)</text>
+  
+  <!-- Arrow 2 -->
+  <path d="M 360 190 L 390 190" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+  
+  <!-- Text Chunker -->
+  <rect x="400" y="160" width="130" height="60" rx="6" fill="url(#grad3)" filter="url(#shadow)"/>
+  <text x="465" y="185" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Text</text>
+  <text x="465" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Chunker</text>
+  <text x="465" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="white" opacity="0.8">(Window)</text>
+  
+  <!-- Arrow 3 -->
+  <path d="M 530 190 L 560 190" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+  
+  <!-- Index Manager -->
+  <rect x="570" y="160" width="130" height="60" rx="6" fill="url(#grad3)" filter="url(#shadow)"/>
+  <text x="635" y="185" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Index</text>
+  <text x="635" y="200" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white">Manager</text>
+  <text x="635" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="white" opacity="0.8">(Cache)</text>
+  
+  <!-- Context Retriever -->
+  <rect x="230" y="240" width="340" height="50" rx="6" fill="url(#grad4)" filter="url(#shadow)"/>
+  <text x="400" y="260" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">ContextRetriever</text>
+  <text x="400" y="278" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="white" opacity="0.9">(TF-IDF + Keywords)</text>
+  
+  <!-- Arrows to Retriever -->
+  <path d="M 635 220 L 635 235 L 570 235" stroke="#64748b" stroke-width="1.5" fill="none"/>
+  <path d="M 295 220 L 295 235 L 230 235" stroke="#64748b" stroke-width="1.5" fill="none"/>
+  
+  <!-- Agents Section -->
+  <rect x="40" y="330" width="720" height="140" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="400" y="350" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#475569">
+    AI Agents
+  </text>
+  
+  <!-- OutlineAgent -->
+  <rect x="60" y="370" width="140" height="80" rx="6" fill="#dbeafe" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)"/>
+  <text x="130" y="395" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#1e40af">OutlineAgent</text>
+  <text x="130" y="415" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#64748b">Genera struttura</text>
+  <text x="130" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#64748b">libro (JSON)</text>
+  
+  <!-- Arrow -->
+  <path d="M 200 410 L 240 410" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrowhead2)"/>
+  
+  <!-- ChapterWriterAgent -->
+  <rect x="250" y="370" width="140" height="80" rx="6" fill="#dcfce7" stroke="#22c55e" stroke-width="2" filter="url(#shadow)"/>
+  <text x="320" y="395" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#166534">ChapterWriter</text>
+  <text x="320" y="415" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#64748b">Scrive capitoli</text>
+  <text x="320" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#64748b">con contesto KB</text>
+  
+  <!-- Arrow -->
+  <path d="M 390 410 L 430 410" stroke="#22c55e" stroke-width="2" marker-end="url(#arrowhead3)"/>
+  
+  <!-- EditorAgent -->
+  <rect x="440" y="370" width="140" height="80" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="2" filter="url(#shadow)"/>
+  <text x="510" y="395" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#92400e">EditorAgent</text>
+  <text x="510" y="415" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#64748b">Revisiona e</text>
+  <text x="510" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#64748b">migliora stile</text>
+  
+  <!-- Arrow -->
+  <path d="M 580 410 L 620 410" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowhead4)"/>
+  
+  <!-- CompilerAgent -->
+  <rect x="630" y="370" width="110" height="80" rx="6" fill="#fce7f3" stroke="#ec4899" stroke-width="2" filter="url(#shadow)"/>
+  <text x="685" y="395" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#9d174d">Compiler</text>
+  <text x="685" y="415" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#64748b">Assembla libro</text>
+  <text x="685" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#64748b">finale (MD)</text>
+  
+  <!-- Arrow markers -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+    <marker id="arrowhead2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6"/>
+    </marker>
+    <marker id="arrowhead3" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#22c55e"/>
+    </marker>
+    <marker id="arrowhead4" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b"/>
+    </marker>
+  </defs>
+  
+  <!-- Legend -->
+  <rect x="40" y="455" width="720" height="25" rx="4" fill="#f1f5f9"/>
+  <text x="60" y="472" font-family="Arial, sans-serif" font-size="10" fill="#64748b">
+    <tspan font-weight="bold">Formati supportati:</tspan> PDF, TXT, Markdown | 
+    <tspan font-weight="bold">Chunking:</tspan> 1000 token, 200 overlap | 
+    <tspan font-weight="bold">Retrieval:</tspan> TF-IDF + Keywords
+  </text>
+</svg>
