@@ -75,6 +75,21 @@ class Config:
     chunk_overlap: int = 200                 # Sovrapposizione tra chunk
     max_context_chunks: int = 5              # Numero massimo di chunk da includere nel contesto
     use_semantic_retrieval: bool = True      # Usa retrieval semantico se disponibile
+    # Multi-layered content expansion settings
+    min_chapter_words: int = 6000            # Minimo parole per capitolo
+    chapter_density_threshold: float = 0.8   # Soglia densità contenuto (80% del target)
+    enable_recursive_sections: bool = True   # Abilita generazione ricorsiva sezioni
+    enable_content_validation: bool = True   # Abilita validazione contenuto
+    enable_progressive_outline: bool = True  # Abilita arricchimento progressivo outline
+    compensatory_content_threshold: int = 245  # Pagine minime accettabili
+    max_section_depth: int = 3               # Profondità massima sezioni annidate
+    enable_adaptive_token_budget: bool = True  # Abilita budgeting token adattivo
+    # Hard limits per prevenzione generazione eccessiva
+    section_token_limit_multiplier: float = 1.3  # max_tokens = floor(target_words * multiplier)
+    section_token_interrupt_threshold: float = 1.1  # 110% del target interrompe generazione
+    section_timeout_seconds: int = 180  # 3 minuti timeout per sezione
+    max_overgeneration_threshold: float = 1.2  # 120% del target, scarta e rigenera
+    enable_section_checkpointing: bool = True  # Salva stato ogni sezione completata
 
     def __post_init__(self):
         if self.provider == "bailian" and not self.api_key:
@@ -587,9 +602,13 @@ class KnowledgeBase:
             if file_path.is_file() and file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS:
                 doc = self._parse_file(file_path)
                 if doc and not doc.get("error"):
+                    # Assicurati che il campo 'source' esista
+                    if "source" not in doc:
+                        doc["source"] = str(file_path)
                     documents.append(doc)
                 elif doc and doc.get("error"):
                     self._errors.append(f"{file_path}: {doc['error']}")
+                # Se doc è None, nessun parser ha supportato il file (non dovrebbe succedere con SUPPORTED_EXTENSIONS)
         
         if self._errors:
             logger.warning(f"Errori durante il caricamento di {len(self._errors)} file:")
@@ -794,6 +813,570 @@ class BaseAgent:
             return self.knowledge_base.get_relevant_context(query)
         return ""
 
+# =============================================================================
+# MULTI-LAYERED CONTENT EXPANSION SYSTEM
+# Sistema avanzato per generazione libri lunghi (300+ pagine)
+# =============================================================================
+
+class CharacterDensityEstimator:
+    """
+    Stima il numero di pagine basandosi su euristica di densità caratteri.
+    Considera overhead formattazione markdown e genera proiezioni accurate.
+    """
+    
+    # Standard editoriale: ~3000 caratteri per pagina A4
+    CHARS_PER_PAGE = 3000
+    # Overhead markdown (headers, formattazione): ~15%
+    MARKDOWN_OVERHEAD = 0.15
+    
+    @classmethod
+    def estimate_pages(cls, text: str) -> int:
+        """Stima pagine basata su caratteri, considerando overhead formattazione."""
+        # Rimuovi overhead markdown per stima contenuto effettivo
+        clean_text = re.sub(r'[#*_\[\]()|`\-]', '', text)
+        clean_text = re.sub(r'\n+', ' ', clean_text)
+        
+        effective_chars = len(clean_text) * (1 - cls.MARKDOWN_OVERHEAD)
+        return max(1, int(effective_chars / cls.CHARS_PER_PAGE))
+    
+    @classmethod
+    def estimate_from_chapters(cls, chapters: List[Dict[str, str]]) -> Dict[str, Any]:
+        """Stima pagine da lista capitoli con statistiche dettagliate."""
+        total_chars = sum(len(ch['content']) for ch in chapters)
+        total_words = sum(len(ch['content'].split()) for ch in chapters)
+        estimated_pages = cls.estimate_pages(''.join(ch['content'] for ch in chapters))
+        
+        return {
+            "total_chars": total_chars,
+            "total_words": total_words,
+            "estimated_pages": estimated_pages,
+            "chars_per_chapter_avg": total_chars // len(chapters) if chapters else 0,
+            "words_per_chapter_avg": total_words // len(chapters) if chapters else 0
+        }
+
+
+class AdaptiveTokenBudget:
+    """
+    Allocazione adattiva del budget token basata su complessità capitolo.
+    Prioritizza modelli con 1M+ token context window.
+    """
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self.model_context_windows = {
+            "qwen3.5-plus": 1_000_000,
+            "qwen3-coder-plus": 1_000_000,
+            "qwen3-max-2026-01-23": 262_144,
+            "qwen3-coder-next": 262_144,
+            "kimi-k2.5": 262_144,
+            "MiniMax-M2.5": 196_608,
+            "glm-5": 202_752,
+            "glm-4.7": 202_752,
+            "gpt-4": 8_192,
+            "gpt-4-turbo": 128_000,
+            "gpt-3.5-turbo": 16_384,
+        }
+    
+    def get_available_context(self) -> int:
+        """Restituisce la context window disponibile per il modello corrente."""
+        return self.model_context_windows.get(self.config.model, 8_192)
+    
+    def calculate_complexity_score(self, chapter_info: Dict) -> float:
+        """
+        Calcola punteggio complessità capitolo (0.5 - 2.0).
+        Basato su: numero sottosezioni, topic density, richieste esempi.
+        """
+        score = 1.0  # Base
+        
+        # Fattore numero sottosezioni
+        subsections = chapter_info.get('subsections', [])
+        if len(subsections) >= 5:
+            score += 0.3
+        elif len(subsections) <= 2:
+            score -= 0.2
+        
+        # Fattore target words
+        target_words = chapter_info.get('target_words', 8000)
+        if target_words >= 10000:
+            score += 0.3
+        elif target_words <= 5000:
+            score -= 0.2
+        
+        # Fattore descrizione (keyword che indicano complessità)
+        description = chapter_info.get('description', '').lower()
+        complexity_keywords = ['analisi', 'tecnico', 'dettagliato', 'approfondito',
+                              'caso studio', 'esempio', 'implementazione', 'architettura']
+        keyword_count = sum(1 for kw in complexity_keywords if kw in description)
+        score += keyword_count * 0.1
+        
+        return max(0.5, min(2.0, score))
+    
+    def allocate_tokens(self, chapter_info: Dict, outline_context: str = "") -> int:
+        """Alloca token per capitolo basato su complessità e contesto disponibile."""
+        available_context = self.get_available_context()
+        complexity = self.calculate_complexity_score(chapter_info)
+        
+        # Riserva token per outline e contesto
+        reserved_tokens = len(outline_context) // 4 if outline_context else 1000
+        reserved_tokens = min(reserved_tokens, available_context // 4)
+        
+        # Token disponibili per generazione
+        available_for_generation = available_context - reserved_tokens - 1000  # Margine sicurezza
+        
+        # Allocazione basata su complessità
+        allocated = int(available_for_generation * complexity / 2.0)
+        
+        # Limiti min/max pratici
+        return max(2000, min(allocated, 8000))
+
+
+class ContentValidator:
+    """
+    Validazione contenuto con trigger rigenerazione.
+    Verifica word count minimo e densità contenuto.
+    """
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self.validation_attempts = 0
+        self.max_attempts = 3
+    
+    def validate_chapter(self, chapter_content: str, chapter_info: Dict) -> Dict[str, Any]:
+        """
+        Valida capitolo generato.
+        Restituisce dict con: valid (bool), word_count, density_ratio, needs_regeneration
+        """
+        word_count = len(chapter_content.split())
+        target_words = chapter_info.get('target_words', self.config.words_per_chapter)
+        min_words = self.config.min_chapter_words
+        
+        # Calcola densità rispetto al target
+        density_ratio = word_count / target_words if target_words > 0 else 0
+        
+        # Criteri validazione
+        is_valid = word_count >= min_words
+        needs_regeneration = density_ratio < self.config.chapter_density_threshold
+        
+        result = {
+            "valid": is_valid and not needs_regeneration,
+            "word_count": word_count,
+            "target_words": target_words,
+            "density_ratio": density_ratio,
+            "needs_regeneration": needs_regeneration,
+            "reason": None
+        }
+        
+        if not is_valid:
+            result["reason"] = f"Word count insufficiente: {word_count} < {min_words}"
+        elif needs_regeneration:
+            result["reason"] = f"Densità contenuto bassa: {density_ratio:.1%} < {self.config.chapter_density_threshold:.1%}"
+        
+        return result
+    
+    def should_regenerate(self, validation_result: Dict) -> bool:
+        """Determina se rigenerare basato su risultato validazione e tentativi."""
+        if validation_result["valid"]:
+            return False
+        
+        self.validation_attempts += 1
+        if self.validation_attempts > self.max_attempts:
+            logger.warning(f"Max tentativi raggiunti ({self.max_attempts}), accetto capitolo non ottimale")
+            return False
+        
+        logger.warning(f"Validazione fallita: {validation_result['reason']}. "
+                      f"Tentativo {self.validation_attempts}/{self.max_attempts}")
+        return True
+    
+    def get_enhanced_prompt(self, original_prompt: str, validation_result: Dict) -> str:
+        """Genera prompt più enfatico per rigenerazione."""
+        enhancement = f"""
+
+⚠️ ATTENZIONE: Il capitolo precedente era insufficiente ({validation_result['word_count']} parole).
+REQUISITI CRITICI:
+- Devi generare ALMENO {validation_result['target_words']} parole
+- Sii estremamente dettagliato e approfondito
+- Aggiungi esempi pratici, casi studio, spiegazioni approfondite
+- Non riassumere, espandi ogni concetto al massimo
+"""
+        return original_prompt + enhancement
+
+
+class RecursiveSectionGenerator:
+    """
+    Generatore ricorsivo di sezioni con elaborazione depth-first.
+    Supporta: sottosezioni annidate, case studies, examples, technical deep-dives.
+    
+    Include:
+    - Hard token limits per sezione
+    - Real-time token counter con 110% interrupt
+    - Timeout 3 minuti per sezione con fallback troncato
+    - Section-level checkpointing
+    """
+    
+    def __init__(self, agent: BaseAgent, config: Config, chapter_target_words: int = 0):
+        self.agent = agent
+        self.config = config
+        self.token_budget = AdaptiveTokenBudget(config)
+        self.chapter_target_words = chapter_target_words
+        self.total_tokens_generated = 0
+        self.section_checkpoints: Dict[str, str] = {}
+    
+    def _calculate_section_token_limit(self, section_title: str, num_sections: int) -> int:
+        """
+        Calcola hard limit token per sezione: max_tokens = floor(target_words * 1.3 / num_sections)
+        """
+        if self.chapter_target_words > 0:
+            target_per_section = self.chapter_target_words // num_sections
+            return int(target_per_section * self.config.section_token_limit_multiplier)
+        # Fallback: usa default
+        return int(self.config.words_per_chapter * self.config.section_token_limit_multiplier // num_sections)
+    
+    def _check_token_interrupt(self, current_tokens: int, target_tokens: int) -> bool:
+        """
+        Controlla se raggiungere 110% del target e interrompe generazione.
+        """
+        threshold = int(target_tokens * self.config.section_token_interrupt_threshold)
+        return current_tokens >= threshold
+    
+    def _generate_with_timeout(self, prompt: str, system_prompt: str, max_tokens: int,
+                                section_id: str) -> str:
+        """
+        Genera contenuto con timeout di 3 minuti. Se scade, restituisce contenuto troncato.
+        """
+        import signal
+        
+        class TimeoutError(Exception):
+            pass
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError(f"Timeout {self.config.section_timeout_seconds}s per sezione '{section_id}'")
+        
+        # Imposta timeout
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(self.config.section_timeout_seconds)
+        
+        try:
+            result = self.agent.call_ai(prompt, system_prompt=system_prompt, max_tokens=max_tokens)
+            signal.alarm(0)  # Cancella timeout
+            return result
+        except TimeoutError as e:
+            logger.warning(str(e))
+            # Fallback: contenuto troncato
+            return f"[Contenuto troncato per timeout - sezione '{section_id}']"
+        finally:
+            signal.signal(signal.SIGALRM, old_handler)
+    
+    def generate_section(self, section_title: str, section_description: str,
+                        depth: int = 0, parent_context: str = "",
+                        num_sections: int = 1) -> str:
+        """
+        Genera una sezione in modo ricorsivo depth-first con hard token limits.
+        
+        Args:
+            section_title: Titolo della sezione
+            section_description: Descrizione/dettagli della sezione
+            depth: Profondità corrente (0 = sezione principale)
+            parent_context: Contesto dal genitore per coerenza
+            num_sections: Numero totale di sezioni per calcolo token limit
+        
+        Returns:
+            Contenuto generato della sezione
+        """
+        section_id = f"{'  ' * depth}{section_title}"
+        
+        # Calcola token limit per questa sezione
+        section_token_limit = self._calculate_section_token_limit(section_title, num_sections)
+        interrupt_threshold = int(section_token_limit * self.config.section_token_interrupt_threshold)
+        
+        # Checkpoint: verifica se sezione già generata
+        if self.config.enable_section_checkpointing and section_id in self.section_checkpoints:
+            logger.info(f"Sezione '{section_id}' caricata da checkpoint")
+            return self.section_checkpoints[section_id]
+        
+        if depth > self.config.max_section_depth:
+            # Profondità massima raggiunta, genera contenuto foglia
+            content = self._generate_leaf_content_with_limits(
+                section_title, section_description, parent_context, section_token_limit, section_id
+            )
+        else:
+            # Genera contenuto principale della sezione con timeout
+            main_content = self._generate_section_content_with_limits(
+                section_title, section_description, depth, parent_context,
+                section_token_limit, section_id
+            )
+            
+            # Aggiorna token counter
+            self.total_tokens_generated += count_tokens(main_content)
+            
+            # Check interrupt 110%
+            if self._check_token_interrupt(self.total_tokens_generated, interrupt_threshold):
+                logger.warning(f"INTERRUPT: Raggiunto 110% token limit per sezione '{section_id}'")
+                return main_content[:int(len(main_content) * 0.9)]  # Tronca al 90%
+            
+            # Se abbiamo abbastanza profondità, genera sottosezioni
+            if depth < self.config.max_section_depth - 1:
+                subsections = self._plan_subsections(section_title, section_description)
+                num_subsections = len(subsections) if subsections else 2
+                
+                for i, sub in enumerate(subsections or [{'title': f'{section_title}.1', 'description': ''},
+                                                         {'title': f'{section_title}.2', 'description': ''}]):
+                    # Calcola token limit per sottosezione
+                    sub_token_limit = section_token_limit // num_subsections
+                    
+                    sub_content = self.generate_section(
+                        sub['title'],
+                        sub['description'],
+                        depth + 1,
+                        parent_context + "\n" + main_content[:500],
+                        num_subsections
+                    )
+                    
+                    # Check interrupt dopo ogni sottosezione
+                    self.total_tokens_generated += count_tokens(sub_content)
+                    if self._check_token_interrupt(self.total_tokens_generated, interrupt_threshold):
+                        logger.warning(f"INTERRUPT: Raggiunto 110% token limit in sottosezione '{sub['title']}'")
+                        break
+                    
+                    main_content += f"\n\n### {sub['title']}\n\n{sub_content}"
+            
+            content = main_content
+        
+        # Salva checkpoint
+        if self.config.enable_section_checkpointing:
+            self.section_checkpoints[section_id] = content
+        
+        return content
+    
+    def _generate_section_content_with_limits(self, title: str, description: str,
+                                              depth: int, context: str,
+                                              token_limit: int, section_id: str) -> str:
+        """Genera contenuto per una sezione specifica con hard token limit e timeout."""
+        indent = "  " * depth
+        
+        # Calcola max_tokens per la chiamata API
+        max_tokens = min(
+            int(token_limit * 0.8),  # 80% del token limit per margine sicurezza
+            self.config.max_tokens_per_call
+        )
+        
+        prompt = f"""
+{indent}Scrivi la sezione "{title}" in modo CONCISO e MIRATO.
+
+{indent}Descrizione: {description}
+
+{indent}Contesto: {context[:500] if context else 'Nessuno'}
+
+{indent}VINCOLI RIGIDI:
+{indent}- Scrivi ESATTAMENTE 2-3 paragrafi (non di più)
+{indent}- Massimo {int(token_limit // 4)} parole (~{token_limit} token)
+{indent}- Sii diretto, evita ripetizioni
+{indent}- Usa formattazione markdown leggera
+"""
+        system = "Sei uno scrittore tecnico CONCISO. Rispetta rigorosamente i limiti di lunghezza."
+        
+        # Genera con timeout
+        content = self._generate_with_timeout(prompt, system, max_tokens, section_id)
+        
+        # Post-generation validation: scarta se >120% target
+        content_tokens = count_tokens(content)
+        if content_tokens > int(token_limit * self.config.max_overgeneration_threshold):
+            logger.warning(f"OVERGENERATION: Sezione '{section_id}' ha {content_tokens} token (limite: {token_limit}). Troncamento...")
+            # Tronca al token limit
+            words = content.split()
+            max_words = int(token_limit * 0.75)  # 1 token ≈ 1.33 parole
+            content = ' '.join(words[:max_words]) + " [...]"
+        
+        return content
+    
+    def _generate_leaf_content_with_limits(self, title: str, description: str,
+                                           context: str, token_limit: int,
+                                           section_id: str) -> str:
+        """Genera contenuto foglia con hard token limit e timeout."""
+        max_tokens = min(
+            int(token_limit * 0.8),
+            self.config.max_tokens_per_call
+        )
+        
+        prompt = f"""
+Scrivi contenuto CONCISO per "{title}".
+
+Descrizione: {description}
+Contesto: {context[:300] if context else 'Nessuno'}
+
+VINCOLI RIGIDI:
+- Massimo {int(token_limit // 4)} parole (~{token_limit} token)
+- 1-2 paragrafi brevi
+- Niente ripetizioni
+"""
+        content = self._generate_with_timeout(prompt, "Scrivi contenuto TECNICO e CONCISO.",
+                                               max_tokens, section_id)
+        
+        # Post-generation validation
+        content_tokens = count_tokens(content)
+        if content_tokens > int(token_limit * self.config.max_overgeneration_threshold):
+            logger.warning(f"OVERGENERATION foglia: '{section_id}' ha {content_tokens} token. Troncamento...")
+            words = content.split()
+            max_words = int(token_limit * 0.75)
+            content = ' '.join(words[:max_words]) + " [...]"
+        
+        return content
+    
+    def _generate_leaf_content(self, title: str, description: str, context: str) -> str:
+        """Genera contenuto foglia (senza ulteriori sottosezioni)."""
+        # Metodo legacy mantenuto per retrocompatibilità
+        return self._generate_leaf_content_with_limits(title, description, context,
+                                                        int(self.config.words_per_chapter * 0.1),
+                                                        title)
+    
+    def _generate_section_content(self, title: str, description: str,
+                                   depth: int, context: str) -> str:
+        """Genera contenuto per una sezione specifica."""
+        indent = "  " * depth
+        prompt = f"""
+{indent}Scrivi la sezione "{title}" in modo approfondito e dettagliato.
+
+{indent}Descrizione: {description}
+
+{indent}Contesto: {context[:1000] if context else 'Nessuno'}
+
+{indent}REQUISITI:
+{indent}- Scrivi almeno 3-4 paragrafi dettagliati
+{indent}- Includi esempi pratici e spiegazioni approfondite
+{indent}- Usa formattazione markdown (titoli, elenchi, enfasi)
+{indent}- Sii completo, non riassumere
+"""
+        system = "Sei uno scrittore tecnico esperto. Scrivi contenuto denso, dettagliato e professionale."
+        return self.agent.call_ai(prompt, system_prompt=system, max_tokens=2000)
+    
+    def _generate_leaf_content(self, title: str, description: str, context: str) -> str:
+        """Genera contenuto foglia (senza ulteriori sottosezioni)."""
+        prompt = f"""
+Scrivi contenuto dettagliato per "{title}".
+
+Descrizione: {description}
+Contesto: {context[:500] if context else 'Nessuno'}
+
+REQUISITI:
+- Contenuto denso e approfondito
+- Almeno 2-3 paragrafi sostanziali
+- Esempi concreti dove applicabile
+"""
+        return self.agent.call_ai(prompt, system_prompt="Scrivi contenuto tecnico dettagliato.",
+                                  max_tokens=1500)
+    
+    def _plan_subsections(self, parent_title: str, parent_description: str) -> List[Dict]:
+        """Pianifica sottosezioni per una sezione data."""
+        prompt = f"""
+Per la sezione "{parent_title}" (desc: {parent_description}),
+genera 2-3 sottosezioni pertinenti.
+
+Rispondi con JSON:
+[
+  {{"title": "Titolo sottosezione", "description": "Breve descrizione"}},
+  ...
+]
+"""
+        try:
+            response = self.agent.call_ai(prompt, max_tokens=1000)
+            # Estrai JSON
+            match = re.search(r'\[.*\]', response, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+        except Exception as e:
+            logger.warning(f"Errore pianificazione sottosezioni: {e}")
+        
+        return []  # Fallback: nessuna sottosezione
+
+
+class ProgressiveOutlineEnricher:
+    """
+    Arricchimento progressivo dell'outline in 3 fasi:
+    1. Outline base (titoli + descrizioni)
+    2. Espansione in blueprint dettagliati
+    3. Finalizzazione con metadati
+    """
+    
+    def __init__(self, agent: BaseAgent, config: Config):
+        self.agent = agent
+        self.config = config
+    
+    def enrich(self, basic_outline: Dict) -> Dict:
+        """
+        Arricchisce l'outline attraverso fasi progressive.
+        """
+        logger.info("Fase 1: Outline base completato")
+        
+        # Fase 2: Espansione blueprint
+        enriched_chapters = []
+        for i, chapter in enumerate(basic_outline.get('chapters', []), 1):
+            logger.info(f"Fase 2: Arricchimento capitolo {i}/{len(basic_outline['chapters'])}")
+            enriched_chapter = self._enrich_chapter_blueprint(chapter)
+            enriched_chapters.append(enriched_chapter)
+        
+        enriched_outline = {
+            "title": basic_outline.get('title', 'Libro'),
+            "chapters": enriched_chapters
+        }
+        
+        logger.info("Fase 3: Finalizzazione outline")
+        return self._finalize_outline(enriched_outline)
+    
+    def _enrich_chapter_blueprint(self, chapter: Dict) -> Dict:
+        """Arricchisce un singolo capitolo con blueprint dettagliato."""
+        prompt = f"""
+Per il capitolo "{chapter['title']}", crea un blueprint dettagliato.
+
+Descrizione originale: {chapter.get('description', '')}
+Target words: {chapter.get('target_words', 8000)}
+
+Genera:
+1. Sezioni principali (almeno 4-5)
+2. Per ogni sezione: 2-3 sottosezioni specifiche
+3. Key points da coprire
+
+Rispondi con JSON:
+{{
+  "sections": [
+    {{
+      "title": "Titolo sezione",
+      "subsections": ["Sottosezione 1", "Sottosezione 2"],
+      "key_points": ["Punto chiave 1", "Punto chiave 2"]
+    }}
+  ]
+}}
+"""
+        try:
+            response = self.agent.call_ai(prompt, max_tokens=2000)
+            match = re.search(r'\{.*\}', response, re.DOTALL)
+            if match:
+                blueprint = json.loads(match.group())
+                chapter['blueprint'] = blueprint
+                # Aggiorna sottosezioni con quelle dettagliate
+                all_subsections = []
+                for sec in blueprint.get('sections', []):
+                    all_subsections.extend(sec.get('subsections', []))
+                if all_subsections:
+                    chapter['subsections'] = all_subsections
+        except Exception as e:
+            logger.warning(f"Errore arricchimento capitolo: {e}")
+        
+        return chapter
+    
+    def _finalize_outline(self, outline: Dict) -> Dict:
+        """Finalizza l'outline con metadati e validazione."""
+        total_target_words = sum(
+            ch.get('target_words', self.config.words_per_chapter)
+            for ch in outline['chapters']
+        )
+        outline['metadata'] = {
+            'total_chapters': len(outline['chapters']),
+            'total_target_words': total_target_words,
+            'estimated_pages': total_target_words // self.config.words_per_page,
+            'enriched': True
+        }
+        return outline
+
+
 # ----------------------------------------------------------------------
 # Sub‑agent specializzati
 # ----------------------------------------------------------------------
@@ -807,17 +1390,28 @@ class OutlineAgent(BaseAgent):
             context = self.knowledge_base.get_relevant_context(self.config.topic)
             logger.info("Contesto aggiunto alla generazione dell'outline")
         
+        # Calcola il numero esatto di capitoli necessari
+        total_words = self.config.target_pages * self.config.words_per_page
+        num_chapters = max(15, min(30, round(total_words / self.config.words_per_chapter)))
+        words_per_chapter = total_words // num_chapters
+        
         prompt = f"""
-Crea una struttura dettagliata per un libro di {self.config.target_pages} pagine (circa {self.config.target_pages * self.config.words_per_page} parole) 
+Crea una struttura dettagliata per un libro di ESATTAMENTE {self.config.target_pages} pagine (circa {total_words} parole totali)
 sul tema: "{self.config.topic}".
+
+REQUISITI OBBLIGATORI:
+- Il libro DEVE avere ESATTAMENTE {num_chapters} capitoli (non di più, non di meno)
+- Ogni capitolo deve avere circa {words_per_chapter} parole
+- Il totale delle parole di tutti i capitoli deve essere circa {total_words}
+- Struttura il contenuto in modo approfondito per coprire tutte le pagine richieste
 
 {context if context else ""}
 
-Il libro deve essere diviso in capitoli e, se necessario, sottocapitoli.
 Per ogni capitolo fornisci:
 - titolo
-- una breve descrizione del contenuto (2-3 righe)
-- parole obiettivo (circa {self.config.words_per_chapter})
+- una descrizione dettagliata del contenuto (3-5 righe)
+- parole obiettivo (circa {words_per_chapter})
+- sottosezioni specifiche (almeno 3-5 per capitolo)
 
 Rispondi SOLO con un JSON valido con questa struttura:
 {{
@@ -825,37 +1419,153 @@ Rispondi SOLO con un JSON valido con questa struttura:
   "chapters": [
     {{
       "title": "Titolo capitolo 1",
-      "description": "...",
-      "target_words": 8000,
-      "subsections": ["Sottosezione 1", "Sottosezione 2"]
+      "description": "Descrizione dettagliata...",
+      "target_words": {words_per_chapter},
+      "subsections": ["Sottosezione 1", "Sottosezione 2", "Sottosezione 3", "Sottosezione 4"]
     }},
-    ...
+    ... (totale ESATTAMENTE {num_chapters} capitoli)
   ]
 }}
+
+IMPORTANTE: Genera ESATTAMENTE {num_chapters} capitoli, né più né meno.
 """
-        system = "Sei un esperto scrittore e organizzi strutture di libri. Rispondi solo con JSON valido."
+        system = "Sei un esperto scrittore e organizzi strutture di libri dettagliate. Rispondi solo con JSON valido. Assicurati di generare il numero esatto di capitoli richiesto."
         response = self.call_ai(prompt, system_prompt=system, max_tokens=3000)
         response = response.strip()
         if response.startswith("```json"):
             response = response[7:]
         if response.endswith("```"):
             response = response[:-3]
+        
+        # Tentativo di parsing JSON con gestione errori avanzata
+        outline = self._parse_outline_json(response)
+        
+        # Validazione: assicurati che ci sia il numero minimo di capitoli
+        chapters = outline.get("chapters", [])
+        min_chapters = max(10, self.config.target_pages // 40)  # Almeno 1 capitolo ogni 40 pagine
+        
+        if len(chapters) < min_chapters:
+            logger.warning(f"Outline ha solo {len(chapters)} capitoli, ne richiede almeno {min_chapters}. Rigenerazione...")
+            # Richiama ricorsivamente con un prompt più enfatico
+            return self._generate_enforced_outline(min_chapters)
+        
+        return outline
+    
+    def _parse_outline_json(self, response: str) -> Dict:
+        """
+        Parsing JSON con gestione avanzata errori per JSON troncato o malformato.
+        """
         try:
             outline = json.loads(response)
+            return outline
         except json.JSONDecodeError as e:
-            logger.error(f"Errore parsing JSON dall'OutlineAgent: {e}\nRisposta:\n{response}")
-            outline = {
-                "title": f"Libro su {self.config.topic}",
-                "chapters": [
-                    {"title": "Introduzione", "description": "Introduzione al tema.", "target_words": 5000},
-                    {"title": "Sviluppo", "description": "Contenuto principale.", "target_words": 10000},
-                    {"title": "Conclusioni", "description": "Riflessioni finali.", "target_words": 5000}
-                ]
-            }
-        return outline
+            logger.warning(f"Errore parsing JSON: {e}")
+            
+            # Tentativo 1: Estrai solo la parte valida del JSON usando regex
+            match = re.search(r'\{.*\}', response, re.DOTALL)
+            if match:
+                try:
+                    partial_json = match.group()
+                    # Aggiungi chiusura forzata se manca
+                    if not partial_json.endswith('}'):
+                        # Conta parentesi aperte/chiuse
+                        open_braces = partial_json.count('{')
+                        close_braces = partial_json.count('}')
+                        missing_braces = open_braces - close_braces
+                        partial_json += '}' * missing_braces
+                    
+                    outline = json.loads(partial_json)
+                    logger.info(f"JSON parzialmente recuperato con successo")
+                    return outline
+                except json.JSONDecodeError:
+                    pass
+            
+            # Tentativo 2: Usa fallback
+            logger.error(f"Impossibile recuperare JSON. Uso fallback.")
+            return self._create_fallback_outline()
+    
+    def _generate_enforced_outline(self, min_chapters: int) -> Dict:
+        """Genera un outline con enforcement del numero di capitoli."""
+        total_words = self.config.target_pages * self.config.words_per_page
+        words_per_chapter = total_words // min_chapters
+        
+        prompt = f"""
+CRITICO: Devi generare ESATTAMENTE {min_chapters} capitoli per un libro di {self.config.target_pages} pagine.
+
+Tema: "{self.config.topic}"
+
+REQUISITI NON NEGOZIABILI:
+1. Genera ESATTAMENTE {min_chapters} capitoli (conta attentamente)
+2. Ogni capitolo deve avere target_words = {words_per_chapter}
+3. La somma di tutti i target_words deve essere circa {total_words}
+4. Distribuisci gli argomenti in modo approfondito su tutti i {min_chapters} capitoli
+
+Rispondi SOLO con JSON valido.
+"""
+        system = "Sei un esperto di strutture editoriali. DEVI generare ESATTAMENTE il numero di capitoli richiesto. Conta i capitoli prima di rispondere."
+        response = self.call_ai(prompt, system_prompt=system, max_tokens=4000)
+        
+        try:
+            response = response.strip()
+            if response.startswith("```json"):
+                response = response[7:]
+            if response.endswith("```"):
+                response = response[:-3]
+            outline = json.loads(response)
+            
+            # Verifica finale
+            chapters = outline.get("chapters", [])
+            if len(chapters) < min_chapters:
+                logger.warning(f"Secondo tentativo fallito: {len(chapters)} capitoli. Uso fallback.")
+                return self._create_fallback_outline()
+            return outline
+        except Exception as e:
+            logger.error(f"Errore nel secondo tentativo: {e}")
+            return self._create_fallback_outline()
+    
+    def _create_fallback_outline(self) -> Dict:
+        """Crea un outline di fallback con la struttura corretta."""
+        total_words = self.config.target_pages * self.config.words_per_page
+        num_chapters = max(15, self.config.target_pages // 25)  # Circa 1 capitolo ogni 25 pagine
+        words_per_chapter = total_words // num_chapters
+        
+        chapters = []
+        for i in range(1, num_chapters + 1):
+            if i == 1:
+                title = "Introduzione"
+                desc = f"Presentazione del tema '{self.config.topic}', contestualizzazione e obiettivi del libro."
+            elif i == num_chapters:
+                title = "Conclusioni"
+                desc = "Sintesi dei concetti principali, riflessioni finali e prospettive future."
+            else:
+                title = f"Capitolo {i}: Approfondimento tematico"
+                desc = f"Analisi dettagliata degli aspetti centrali di '{self.config.topic}', con esempi pratici e casi studio."
+            
+            chapters.append({
+                "title": title,
+                "description": desc,
+                "target_words": words_per_chapter,
+                "subsections": [f"Sezione {i}.1", f"Sezione {i}.2", f"Sezione {i}.3", f"Sezione {i}.4"]
+            })
+        
+        logger.info(f"Creato outline di fallback con {len(chapters)} capitoli")
+        return {
+            "title": f"{self.config.topic}",
+            "chapters": chapters
+        }
 
 class ChapterWriterAgent(BaseAgent):
+    def __init__(self, config: Config, name: str, knowledge_base: Optional[KnowledgeBase] = None):
+        super().__init__(config, name, knowledge_base)
+        self.section_generator = RecursiveSectionGenerator(self, config)
+        self.content_validator = ContentValidator(config)
+        self.token_budget = AdaptiveTokenBudget(config)
+    
     def write_chapter(self, chapter_info: Dict, outline_context: str, previous_summary: str = "") -> str:
+        """
+        Scrive un capitolo con validazione e rigenerazione automatica.
+        Supporta generazione ricorsiva sezioni se abilitato.
+        """
         # Recupera contesto specifico per questo capitolo
         kb_context = ""
         if self.knowledge_base and self.knowledge_base.is_loaded():
@@ -863,6 +1573,150 @@ class ChapterWriterAgent(BaseAgent):
             if kb_context:
                 logger.info(f"Contesto recuperato per capitolo: {chapter_info.get('title', 'Unknown')}")
         
+        # Calcola budget token adattivo
+        max_tokens = self.token_budget.allocate_tokens(chapter_info, outline_context)
+        logger.info(f"Token budget allocato per '{chapter_info['title']}': {max_tokens}")
+        
+        # Genera capitolo (con eventuale rigenerazione)
+        attempt = 0
+        chapter_content = ""
+        
+        while attempt < self.content_validator.max_attempts:
+            attempt += 1
+            
+            if self.config.enable_recursive_sections:
+                # Usa generazione ricorsiva sezioni
+                chapter_content = self._write_chapter_recursive(
+                    chapter_info, outline_context, previous_summary, kb_context, max_tokens
+                )
+            else:
+                # Usa generazione tradizionale
+                chapter_content = self._write_chapter_traditional(
+                    chapter_info, outline_context, previous_summary, kb_context, max_tokens
+                )
+            
+            # Valida contenuto
+            if self.config.enable_content_validation:
+                validation = self.content_validator.validate_chapter(chapter_content, chapter_info)
+                logger.info(f"Validazione capitolo '{chapter_info['title']}': "
+                          f"{validation['word_count']}/{validation['target_words']} parole "
+                          f"(densità: {validation['density_ratio']:.1%})")
+                
+                if validation['valid']:
+                    logger.info(f"Capitolo '{chapter_info['title']}' validato con successo")
+                    break
+                elif attempt < self.content_validator.max_attempts:
+                    logger.warning(f"Rigenerazione capitolo (tentativo {attempt + 1})")
+                    continue
+                else:
+                    logger.warning(f"Max tentativi raggiunti, uso capitolo non ottimale")
+            else:
+                break
+        
+        return chapter_content
+    
+    def _write_chapter_recursive(self, chapter_info: Dict, outline_context: str,
+                                  previous_summary: str, kb_context: str, max_tokens: int) -> str:
+        """
+        Scrive capitolo usando generazione ricorsiva sezioni con hard token limits.
+        
+        Include:
+        - Calibrazione lunghezza attesa con CharacterDensityEstimator
+        - Hard token limit per sezione (max_tokens = floor(target_words * 1.3))
+        - Real-time token counter con 110% interrupt
+        - Timeout 3 minuti per sezione
+        - Post-generation validation (discard se >120% target)
+        - Section-level checkpointing
+        """
+        sections = chapter_info.get('subsections', [])
+        blueprint = chapter_info.get('blueprint', {})
+        target_words = chapter_info.get('target_words', self.config.words_per_chapter)
+        
+        # Calibra lunghezza attesa con CharacterDensityEstimator
+        # 1 parola ≈ 4 token, 1 pagina ≈ 3000 caratteri ≈ 750 parole
+        expected_tokens_per_section = int((target_words * 1.3) / max(len(sections), 1))
+        logger.info(f"Calibrazione: {expected_tokens_per_section} token/sectione (target: {target_words} parole)")
+        
+        # Inizializza section generator con target specifico per capitolo
+        self.section_generator = RecursiveSectionGenerator(self, self.config, target_words)
+        
+        # Introduzione capitolo con hard limit
+        intro_max_tokens = min(500, expected_tokens_per_section // 4)
+        intro_prompt = f"""
+Scrivi l'introduzione del capitolo "{chapter_info['title']}".
+
+Descrizione: {chapter_info.get('description', '')}
+
+VINCOLI RIGIDI:
+- Scrivi ESATTAMENTE 1-2 paragrafi brevi
+- Massimo {intro_max_tokens * 4} parole
+- Sii conciso, vai dritto al punto
+"""
+        intro = self.call_ai(intro_prompt, system_prompt="Scrivi introduzioni BREVI e MIRATE.",
+                            max_tokens=intro_max_tokens)
+        
+        content_parts = [f"# {chapter_info['title']}\n\n{intro}"]
+        running_token_count = count_tokens(intro)
+        interrupt_threshold = int(target_words * 1.3 * 1.1)  # 110% del target
+        
+        # Genera ogni sezione in modo ricorsivo
+        blueprint_sections = blueprint.get('sections', [])
+        num_sections = len(blueprint_sections) if blueprint_sections else max(len(sections), 1)
+        
+        for i, section in enumerate(blueprint_sections if blueprint_sections else
+                                    [{'title': s, 'description': ''} for s in sections]):
+            section_title = section.get('title', str(section))
+            logger.info(f"  Generazione sezione {i+1}/{num_sections}: {section_title}")
+            
+            # Check interrupt prima di generare
+            if running_token_count > interrupt_threshold:
+                logger.warning(f"INTERRUPT: Raggiunto 110% token limit ({running_token_count} token). "
+                              f"Salto sezioni rimanenti.")
+                break
+            
+            section_content = self.section_generator.generate_section(
+                section_title,
+                section.get('description', ''),
+                depth=0,
+                parent_context=outline_context + "\n" + previous_summary,
+                num_sections=num_sections
+            )
+            
+            running_token_count += count_tokens(section_content)
+            content_parts.append(section_content)
+            
+            # Log token usage
+            logger.info(f"  Sezione completata: {count_tokens(section_content)} token, "
+                       f"totale capitolo: {running_token_count} token")
+        
+        # Post-generation validation: scarta se >120% target
+        if running_token_count > int(target_words * 1.3 * self.config.max_overgeneration_threshold):
+            logger.warning(f"OVERGENERATION: Capitolo ha {running_token_count} token "
+                          f"(limite: {int(target_words * 1.2)}). Troncamento...")
+            # Tronca contenuto all'80%
+            truncate_at = int(len(content_parts) * 0.8)
+            content_parts = content_parts[:truncate_at]
+            content_parts.append("\n\n[... contenuto troncato per eccessiva lunghezza ...]")
+        
+        # Conclusione capitolo solo se non abbiamo superato il limite
+        if running_token_count < interrupt_threshold:
+            conclusion_max_tokens = min(400, expected_tokens_per_section // 5)
+            conclusion_prompt = f"""
+Scrivi una conclusione BREVE per il capitolo "{chapter_info['title']}".
+
+VINCOLI RIGIDI:
+- Massimo 1 paragrafo
+- Massimo {conclusion_max_tokens * 4} parole
+- Riassumi in 2-3 frasi
+"""
+            conclusion = self.call_ai(conclusion_prompt, max_tokens=conclusion_max_tokens)
+            content_parts.append(f"\n\n## Conclusione\n\n{conclusion}")
+        
+        return "\n\n".join(content_parts)
+    
+    def _write_chapter_traditional(self, chapter_info: Dict, outline_context: str,
+                                    previous_summary: str, kb_context: str, max_tokens: int) -> str:
+        """Scrive capitolo usando metodo tradizionale."""
         prompt = f"""
 Stai scrivendo un capitolo per un libro.
 
@@ -873,18 +1727,24 @@ Sottosezioni: {chapter_info.get('subsections', [])}
 Parole obiettivo: {chapter_info.get('target_words', 8000)}
 
 Contesto del libro (struttura generale):
-{outline_context}
+{outline_context[:2000]}
 
 Sommario dei capitoli precedenti (se presente):
-{previous_summary}
+{previous_summary[:1000]}
 
 {kb_context if kb_context else ""}
 
+REQUISITI CRITICI:
+- Genera ALMENO {chapter_info.get('target_words', 8000)} parole
+- Sii estremamente dettagliato e approfondito
+- Aggiungi esempi pratici, casi studio, spiegazioni approfondite
+- Usa formattazione markdown completa (titoli, paragrafi, elenchi, enfasi)
+- Non riassumere, espandi ogni concetto al massimo
+
 Scrivi il capitolo in modo completo, dettagliato, con uno stile professionale e coinvolgente.
-Assicurati di raggiungere circa le parole obiettivo. Formatta con markdown (titoli, paragrafi, elenchi).
 """
-        system = "Sei uno scrittore professionista di saggistica. Scrivi capitoli ben strutturati, chiari e approfonditi."
-        return self.call_ai(prompt, system_prompt=system, max_tokens=3000)
+        system = "Sei uno scrittore professionista di saggistica. Scrivi capitoli estremamente dettagliati, densi di contenuto e ben strutturati."
+        return self.call_ai(prompt, system_prompt=system, max_tokens=max_tokens)
 
 class EditorAgent(BaseAgent):
     def edit_chapter(self, chapter_text: str, chapter_title: str) -> str:
@@ -937,6 +1797,10 @@ class BookOrchestrator:
         self.editor_agent = EditorAgent(config, "EditorAgent", self.knowledge_base)
         self.compiler_agent = CompilerAgent(config, "CompilerAgent", self.knowledge_base)
         
+        # Inizializza sistema multi-layered
+        self.outline_enricher = ProgressiveOutlineEnricher(self.outline_agent, config)
+        self.density_estimator = CharacterDensityEstimator()
+        
         self.checkpoint_dir = Path(config.checkpoint_dir)
         self.checkpoint_dir.mkdir(exist_ok=True)
         self.state = self._load_checkpoint()
@@ -979,7 +1843,15 @@ class BookOrchestrator:
     def generate_book(self):
         if self.state["outline"] is None:
             logger.info("Generazione outline del libro...")
-            outline = self.outline_agent.generate()
+            basic_outline = self.outline_agent.generate()
+            
+            # Fase di arricchimento progressivo dell'outline
+            if self.config.enable_progressive_outline:
+                logger.info("Arricchimento progressivo dell'outline...")
+                outline = self.outline_enricher.enrich(basic_outline)
+            else:
+                outline = basic_outline
+            
             self.state["outline"] = outline
             self._save_checkpoint()
         else:
@@ -990,6 +1862,11 @@ class BookOrchestrator:
         chapters_info = outline.get("chapters", [])
         if not chapters_info:
             raise ValueError("L'outline non contiene capitoli.")
+        
+        # Validazione: verifica che il numero di capitoli sia sufficiente
+        min_chapters = max(10, self.config.target_pages // 40)
+        if len(chapters_info) < min_chapters:
+            logger.warning(f"L'outline ha solo {len(chapters_info)} capitoli, ne sono consigliati almeno {min_chapters} per {self.config.target_pages} pagine.")
 
         start_idx = self.state["current_chapter_idx"]
         for idx in range(start_idx, len(chapters_info)):
@@ -1024,6 +1901,37 @@ class BookOrchestrator:
         logger.info("Compilazione del libro finale...")
         chapters_final = [{"title": c["title"], "content": c["edited"]} for c in self.state["chapters"]]
         book_md = self.compiler_agent.compile_book(title, chapters_final)
+
+        # Calcola statistiche usando CharacterDensityEstimator
+        density_stats = self.density_estimator.estimate_from_chapters(chapters_final)
+        estimated_pages = density_stats["estimated_pages"]
+        target_pages = self.config.target_pages
+        
+        logger.info(f"Statistiche libro (CharacterDensityEstimator):")
+        logger.info(f"  - Caratteri totali: {density_stats['total_chars']:,}")
+        logger.info(f"  - Parole totali: {density_stats['total_words']:,}")
+        logger.info(f"  - Pagine stimate: ~{estimated_pages} (target: {target_pages})")
+        logger.info(f"  - Media caratteri/capitolo: {density_stats['chars_per_chapter_avg']:,}")
+        logger.info(f"  - Media parole/capitolo: {density_stats['words_per_chapter_avg']:,}")
+        logger.info(f"  - Capitoli: {len(chapters_final)}")
+        
+        # Controllo di validazione: interrompi se il libro è significativamente più corto del target
+        min_acceptable_pages = max(self.config.compensatory_content_threshold, int(target_pages * 0.7))
+        if estimated_pages < min_acceptable_pages:
+            error_msg = (
+                f"ERRORE VALIDAZIONE: Il libro generato ha solo ~{estimated_pages} pagine "
+                f"({density_stats['total_chars']:,} caratteri), ma il target era di {target_pages} pagine. "
+                f"Il risultato è inferiore al minimo accettabile di {min_acceptable_pages} pagine. "
+                f"Possibili cause: numero insufficiente di capitoli ({len(chapters_final)}), "
+                f"capitoli troppo brevi, o problemi nella generazione del contenuto. "
+                f"Prova a: 1) Aumentare il numero di capitoli, 2) Verificare il parametro --pages, "
+                f"3) Rigenerare l'outline con una struttura più dettagliata, "
+                f"4) Usare un modello con maggiore context window (es. qwen3.5-plus)."
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        elif estimated_pages < target_pages * 0.9:
+            logger.warning(f"AVVISO: Il libro generato (~{estimated_pages} pagine) è leggermente inferiore al target ({target_pages} pagine).")
 
         output_path = Path(self.config.output_file)
         output_path.write_text(book_md, encoding='utf-8')

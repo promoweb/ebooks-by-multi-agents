@@ -170,17 +170,24 @@ python ebooks.py \
     --output "libro_educazione.md"
 ```
 
-### Utilizzo con Bailian (Coding Plan / OpenClaw)
+### Utilizzo con Bailian (Coding Plan / OpenClaw) ⭐ Consigliato
 
 ```bash
-# Esempio con Bailian (raccomandato per modelli Alibaba Cloud)
+# Esempio con Bailian usando qwen3.5-plus (raccomandato per libri lunghi)
+# Vantaggio: 1 milione di token di context window per gestire libri estesi
 python ebooks.py \
     --topic "Machine Learning Avanzato" \
-    --pages 300 \
+    --pages 500 \
     --provider bailian \
     --model "qwen3.5-plus" \
     --context "./knowledge_base"
 ```
+
+**Perché usare `qwen3.5-plus` per libri lunghi:**
+- **1M token di context** = ~750,000 parole = ~1,500 pagine in memoria contemporaneamente
+- Mantieni l'intero outline del libro nel contesto per coerenza narrativa perfetta
+- Nessuna perdita di informazioni tra capitoli
+- Ideale per libri di 300-500+ pagine
 
 ### Utilizzo con Endpoint Personalizzati
 
@@ -255,7 +262,7 @@ Supporta qualsiasi provider con API compatibile OpenAI:
 
 | Modello | Context Window | Max Tokens | Input | Ideale per |
 |---------|---------------|------------|-------|------------|
-| `qwen3.5-plus` | 1,000,000 | 65,536 | text, image | Generazione libri lunghi |
+| **`qwen3.5-plus`** ⭐ | **1,000,000** | 65,536 | text, image | **Generazione libri lunghi, documenti estesi** |
 | `qwen3-max-2026-01-23` | 262,144 | 65,536 | text | Qualità massima |
 | `qwen3-coder-next` | 262,144 | 65,536 | text | Codice e tecnico |
 | `qwen3-coder-plus` | 1,000,000 | 65,536 | text | Codice e libri tecnici |
@@ -264,7 +271,35 @@ Supporta qualsiasi provider con API compatibile OpenAI:
 | `glm-5` | 202,752 | 16,384 | text | Generale purpose |
 | `glm-4.7` | 202,752 | 16,384 | text | Generale purpose |
 
+> **🏆 Modello Consigliato: `qwen3.5-plus`**
+>
+> Con una **context window di 1 milione di token** (~750,000 parole), `qwen3.5-plus` è il modello ideale per:
+> - **Ebook di grandi dimensioni** (500+ pagine)
+> - **Analisi di documenti estesi** (interi libri, report aziendali)
+> - **Elaborazione di codebase** (progetti software completi)
+> - **Conversazioni con memoria estesa** (contesto che persiste per migliaia di messaggi)
+>
+> **Vantaggio competitivo**: Rispetto a GPT-4 (8K-32K token) o Claude (100K token), `qwen3.5-plus` offre **10-100x più contesto**, eliminando la necessità di frammentare documenti lunghi.
+
 > **Nota**: Il provider `bailian` è raccomandato per l'uso con Alibaba Cloud Coding Plan/OpenClaw. Usa l'endpoint OpenAI-compatible `https://coding-intl.dashscope.aliyuncs.com/v1`.
+
+**Confronto Context Window:**
+
+| Modello | Context Window | Vantaggi | Limitazioni |
+|---------|---------------|----------|-------------|
+| **qwen3.5-plus** | **1,000,000 token** | ✅ Interi libri in un singolo prompt ✅ Nessuna frammentazione ✅ Coerenza narrativa perfetta | Costo computazionale maggiore per prompt lunghi |
+| qwen3-coder-plus | 1,000,000 token | ✅ Ottimo per codice + documentazione | Specializzato per codice |
+| kimi-k2.5 | 262,144 token | ✅ Buon equilibrio prestazioni/costo | Richiede chunking per libri lunghi |
+| GPT-4 | 8,192-32,768 token | ✅ Alta qualità output | ❌ Necessario frammentare documenti |
+| Claude 3 | 200,000 token | ✅ Buon contesto | ❌ Limitato per libri completi |
+
+**Casi d'uso raccomandati per `qwen3.5-plus`:**
+
+1. **Generazione ebook lunghi (>300 pagine)**: Mantieni l'intero outline e i capitoli precedenti in memoria per coerenza narrativa
+2. **Analisi documenti aziendali**: Processa report annuali, contratti complessi, documentazione tecnica estesa
+3. **Codebase analysis**: Analizza interi repository Git in un singolo prompt
+4. **Traduzione libri**: Traduci volumi completi mantenendo terminologia e stile coerenti
+5. **Sintesi ricerca**: Elabora centinaia di paper scientifici contemporaneamente
 
 ### 📚 Knowledge Base RAG
 
@@ -345,8 +380,11 @@ BookWriterAI/
 - `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`
 
 **Bailian (Coding Plan):**
-- `qwen3.5-plus` (default), `qwen3-max-2026-01-23`, `qwen3-coder-next`, `qwen3-coder-plus`
+- **`qwen3.5-plus`** ⭐ (default, raccomandato per libri lunghi - 1M token context window)
+- `qwen3-max-2026-01-23`, `qwen3-coder-next`, `qwen3-coder-plus`
 - `kimi-k2.5`, `MiniMax-M2.5`, `glm-5`, `glm-4.7`
+
+> 💡 **Suggerimento**: Per libri di 300+ pagine, usa sempre `qwen3.5-plus` per sfruttare la context window di 1 milione di token.
 
 **Qwen (Legacy):**
 - `qwen-max`, `qwen-plus`, `qwen-turbo`

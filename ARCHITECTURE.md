@@ -1,8 +1,183 @@
-# Documentazione Architetturale: Knowledge Base System
+# Documentazione Architetturale: BookWriterAI Multi-Layered Content Expansion System
 
 ## Panoramica
 
-Il sistema di Knowledge Base Contestuale è un modulo aggiuntivo a `BookWriterAI` che permette di arricchire la generazione di libri con contenuto da documenti di riferimento in formato PDF, TXT e Markdown.
+BookWriterAI implementa un **sistema avanzato di espansione contenuto multi-layered** progettato per generare libri di 300+ pagine con coerenza narrativa e densità di contenuto garantita. Il sistema combina:
+
+- **Multi-Layered Content Expansion**: Generazione ricorsiva depth-first con validazione
+- **Knowledge Base Contestuale**: RAG (Retrieval-Augmented Generation) per documenti PDF, TXT, Markdown
+- **Adaptive Token Budgeting**: Allocazione intelligente del budget token basata su complessità
+- **Progressive Outline Enrichment**: Arricchimento progressivo dell'outline in 3 fasi
+
+## Novità: Multi-Layered Content Expansion System (v2.0)
+
+### Componenti Principali
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    MULTI-LAYERED CONTENT EXPANSION SYSTEM                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────┐ │
+│  │ ProgressiveOutline  │───▶│  ChapterGenerator   │───▶│ ContentValidator│ │
+│  │     Enricher        │    │  (RecursiveSection  │    │  (with retry)   │ │
+│  │                     │    │    Generator)       │    │                 │ │
+│  └─────────────────────┘    └─────────────────────┘    └─────────────────┘ │
+│           │                           │                           │         │
+│           ▼                           ▼                           ▼         │
+│  ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────┐ │
+│  │  Blueprint Detail   │    │ AdaptiveTokenBudget │    │ CharacterDensity│ │
+│  │   (sections/subsec) │    │  (complexity-based) │    │   Estimator     │ │
+│  └─────────────────────┘    └─────────────────────┘    └─────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Progressive Outline Enrichment
+
+Arricchimento dell'outline in 3 fasi:
+
+**Fase 1: Outline Base**
+- Titoli capitoli
+- Descrizioni generali
+- Target words per capitolo
+
+**Fase 2: Blueprint Dettagliato**
+- Sezioni principali (4-5 per capitolo)
+- Sottosezioni specifiche (2-3 per sezione)
+- Key points da coprire
+
+**Fase 3: Finalizzazione**
+- Metadati aggregate
+- Stima pagine totali
+- Validazione struttura
+
+### 2. Recursive Section Generator
+
+Generazione depth-first del contenuto:
+
+```
+Capitolo
+├── Sezione 1 (depth=0)
+│   ├── Contenuto principale
+│   ├── Sottosezione 1.1 (depth=1)
+│   │   └── Contenuto foglia
+│   └── Sottosezione 1.2 (depth=1)
+│       └── Contenuto foglia
+├── Sezione 2 (depth=0)
+│   └── ...
+```
+
+**Caratteristiche:**
+- Profondità massima configurabile (`max_section_depth`)
+- Contesto ereditato dal parent
+- Supporto per case studies, examples, technical deep-dives
+
+### 3. Adaptive Token Budget
+
+Allocazione token basata su:
+
+| Fattore | Peso | Descrizione |
+|---------|------|-------------|
+| Numero sottosezioni | +0.3 | ≥5 sottosezioni = più complesso |
+| Target words | +0.3 | ≥10,000 parole = più complesso |
+| Keyword complessità | +0.1×N | "analisi", "tecnico", "caso studio" |
+
+**Context Windows Supportati:**
+
+| Modello | Context Window | Raccomandato per |
+|---------|---------------|------------------|
+| qwen3.5-plus | 1,000,000 token | Libri 500+ pagine |
+| qwen3-coder-plus | 1,000,000 token | Libri tecnici |
+| kimi-k2.5 | 262,144 token | Libri 200-300 pagine |
+| GPT-4 | 8,192-128K token | Libri brevi |
+
+### 4. Content Validator
+
+Validazione con trigger rigenerazione:
+
+```python
+{
+    "valid": bool,              # Capitolo accettabile
+    "word_count": int,          # Parole effettive
+    "target_words": int,        # Parole target
+    "density_ratio": float,     # Rapporto effettivo/target
+    "needs_regeneration": bool  # Richiede rigenerazione
+}
+```
+
+**Criteri:**
+- Minimo 6,000 parole per capitolo (`min_chapter_words`)
+- Densità minima 80% del target (`chapter_density_threshold`)
+- Max 3 tentativi di rigenerazione
+
+### 5. Character Density Estimator
+
+Euristica avanzata per stima pagine:
+
+```
+pagine = (caratteri_effettivi × 0.85) / 3000
+```
+
+Dove:
+- `0.85` = fattore correzione overhead markdown (15%)
+- `3000` = caratteri per pagina A4 (standard editoriale)
+
+**Vantaggi rispetto a word count:**
+- Considera formattazione markdown
+- Più accurato per layout tecnici
+- Compensazione automatica per codice/tabelle
+
+## Configurazione Multi-Layered
+
+```python
+@dataclass
+class Config:
+    # ... config esistente ...
+    
+    # Multi-layered content expansion settings
+    min_chapter_words: int = 6000            # Minimo parole per capitolo
+    chapter_density_threshold: float = 0.8   # Soglia densità (80%)
+    enable_recursive_sections: bool = True   # Generazione ricorsiva
+    enable_content_validation: bool = True   # Validazione contenuto
+    enable_progressive_outline: bool = True  # Arricchimento outline
+    compensatory_content_threshold: int = 245  # Pagine minime
+    max_section_depth: int = 3               # Profondità max sezioni
+    enable_adaptive_token_budget: bool = True  # Budget adattivo
+```
+
+## Flusso di Generazione (v2.0)
+
+```
+1. Generazione Outline Base
+   └─▶ OutlineAgent.generate()
+
+2. Arricchimento Progressivo (se abilitato)
+   └─▶ ProgressiveOutlineEnricher.enrich()
+       ├─▶ Fase 1: Outline base ✓
+       ├─▶ Fase 2: Blueprint dettagliato
+       └─▶ Fase 3: Finalizzazione
+
+3. Generazione Capitoli (per ogni capitolo)
+   └─▶ ChapterWriterAgent.write_chapter()
+       ├─▶ Calcolo token budget adattivo
+       ├─▶ Generazione ricorsiva sezioni
+       ├─▶ Validazione contenuto
+       └─▶ Rigenerazione se necessario (max 3x)
+
+4. Validazione Finale
+   └─▶ CharacterDensityEstimator
+       ├─▶ Stima pagine accurata
+       ├─▶ Confronto con target
+       └─▶ Errore se < 245 pagine (o 70% target)
+
+5. Compilazione e Salvataggio
+   └─▶ CompilerAgent.compile_book()
+```
+
+## Knowledge Base System (Legacy)
+
+Il sistema di Knowledge Base Contestuale è un modulo aggiuntivo che permette di arricchire la generazione di libri con contenuto da documenti di riferimento in formato PDF, TXT e Markdown.
 
 ## Architettura del Sistema
 
@@ -172,16 +347,37 @@ python ebooks.py \
 
 ### Modelli Bailian (Coding Plan/OpenClaw)
 
-| Modello | Context Window | Max Tokens | Input |
-|---------|---------------|------------|-------|
-| `qwen3.5-plus` | 1,000,000 | 65,536 | text, image |
-| `qwen3-max-2026-01-23` | 262,144 | 65,536 | text |
-| `qwen3-coder-next` | 262,144 | 65,536 | text |
-| `qwen3-coder-plus` | 1,000,000 | 65,536 | text |
-| `MiniMax-M2.5` | 196,608 | 32,768 | text |
-| `glm-5` | 202,752 | 16,384 | text |
-| `glm-4.7` | 202,752 | 16,384 | text |
-| `kimi-k2.5` | 262,144 | 32,768 | text, image |
+| Modello | Context Window | Max Tokens | Input | Raccomandato per |
+|---------|---------------|------------|-------|------------------|
+| **`qwen3.5-plus`** ⭐ | **1,000,000** | 65,536 | text, image | **Libri lunghi (300+ pagine), documenti estesi** |
+| `qwen3-max-2026-01-23` | 262,144 | 65,536 | text | Qualità massima |
+| `qwen3-coder-next` | 262,144 | 65,536 | text | Codice e tecnico |
+| `qwen3-coder-plus` | 1,000,000 | 65,536 | text | Codice e libri tecnici |
+| `MiniMax-M2.5` | 196,608 | 32,768 | text | Generale purpose |
+| `glm-5` | 202,752 | 16,384 | text | Generale purpose |
+| `glm-4.7` | 202,752 | 16,384 | text | Generale purpose |
+| `kimi-k2.5` | 262,144 | 32,768 | text, image | Generale purpose |
+
+#### 🏆 Modello Consigliato: `qwen3.5-plus`
+
+**Vantaggio competitivo**: Con **1 milione di token di context window** (~750,000 parole), `qwen3.5-plus` supera di gran lunga i modelli concorrenti:
+
+| Modello | Context Window | Rapporto |
+|---------|---------------|----------|
+| **qwen3.5-plus** | **1,000,000 token** | **1x (baseline)** |
+| Claude 3 Opus | 200,000 token | 5x inferiore |
+| GPT-4 Turbo | 128,000 token | 8x inferiore |
+| kimi-k2.5 | 262,144 token | 4x inferiore |
+
+**Casi d'uso ideali per `qwen3.5-plus`:**
+
+1. **Ebook di grandi dimensioni** (500+ pagine): L'intero outline e i capitoli precedenti rimangono in memoria
+2. **Analisi di documenti estesi**: Report aziendali, contratti, documentazione tecnica completa
+3. **Elaborazione di codebase**: Interi repository in un singolo prompt
+4. **Traduzione di libri**: Mantenimento di coerenza terminologica su volumi completi
+5. **Sintesi di ricerca**: Elaborazione simultanea di centinaia di paper scientifici
+
+**Esempio pratico**: Un libro di 400 pagine (~200,000 parole) richiede circa 270,000 token. Con `qwen3.5-plus`, l'intero libro sta comodamente nel contesto, permettendo coerenza narrativa perfetta tra tutti i capitoli.
 
 ### Parametri Config
 
