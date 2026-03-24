@@ -227,6 +227,91 @@ python ebooks.py \
     # I checkpoint sono salvati automaticamente in checkpoints/
 ```
 
+### Utilizzo della Nuova API Modulare (v2.0)
+
+```python
+from src.book_writer import ProfessionalBookWriter, BookConfig
+
+# Configurazione semplificata
+config = BookConfig(
+    title="Il Mistero della Villa",
+    genre="thriller",
+    target_length=80000,
+    style="commercial",
+    enable_refinement=True,
+    enable_character_tracking=True
+)
+
+# Inizializza il writer
+writer = ProfessionalBookWriter(config)
+
+# Genera con tracking progress
+def on_progress(progress):
+    print(f"[{progress.current_phase}] {progress.progress_percent:.0%} - {progress.message}")
+
+result = writer.generate_book(progress_callback=on_progress)
+
+if result.success:
+    print(f"✅ Generato: {result.book.total_word_count} parole")
+    
+    # Esporta in diversi formati
+    writer.export_book(result.book, "markdown", "output/libro.md")
+    writer.export_book(result.book, "json", "output/libro.json")
+```
+
+#### Generazione Rapida
+
+```python
+from src.book_writer import generate_book
+
+# Funzione convenience
+result = generate_book(
+    title="Romanzo Rapido",
+    genre="romance",
+    target_length=50000
+)
+```
+
+#### Utilizzo Componenti Individuali
+
+```python
+# Sistema memoria narrativa
+from src.narrative import NarrativeStateGraph, NarrativeEvent
+
+narrative = NarrativeStateGraph()
+narrative.add_event(NarrativeEvent(
+    event_id="event_1",
+    event_type="plot_point",
+    chapter_id=1,
+    description="Il protagonista scopre il segreto"
+))
+
+# Knowledge Base RAG
+from src.knowledge import KnowledgeBase
+
+kb = KnowledgeBase()
+kb.add_document("ricerca.pdf")
+context = kb.retrieve("Qual è il movente dell'antagonista?")
+
+# Template per genere
+from src.genre import GenreTemplateManager
+
+manager = GenreTemplateManager()
+thriller = manager.get_template("thriller")
+print(f"Elementi richiesti: {thriller.required_elements}")
+
+# Citazioni accademiche
+from src.technical import CitationManager
+
+citations = CitationManager(style="apa")
+citations.create_reference(
+    reference_type="book",
+    title="AI and the Future",
+    authors=[{"first_name": "John", "last_name": "Smith"}],
+    year=2024
+)
+```
+
 ---
 
 ## ✨ Funzionalità
@@ -336,21 +421,89 @@ Supporta qualsiasi provider con API compatibile OpenAI:
 
 ```
 BookWriterAI/
-├── 📄 ebooks.py              # Entry point principale
+├── 📄 ebooks.py              # Entry point legacy (monolitico)
 ├── 📄 requirements.txt       # Dipendenze Python
 ├── 📄 README.md             # Questo file
 ├── 📄 ARCHITECTURE.md       # Documentazione architetturale
 ├── 📄 LICENSE               # Licenza MIT
 ├── 📄 .env.example          # Template variabili d'ambiente
+│
+├── 📁 src/                  # Architettura modulare v2.0
+│   ├── 📄 __init__.py       # Package exports
+│   ├── 📄 book_writer.py    # API principale
+│   │
+│   ├── 📁 core/             # Infrastruttura core
+│   │   ├── exceptions.py    # Gerarchia eccezioni
+│   │   ├── config.py        # Gestione configurazione
+│   │   ├── llm_client.py    # Client LLM astratto
+│   │   └── base_agent.py    # Base agent con mixins
+│   │
+│   ├── 📁 narrative/        # Sistema memoria narrativa
+│   │   ├── events.py        # EventsStore (SQLite)
+│   │   ├── entities.py      # EntityRegistry
+│   │   ├── relations.py     # RelationsGraph
+│   │   ├── context_synthesizer.py
+│   │   ├── state_graph.py   # Facade NarrativeStateGraph
+│   │   └── emotional_arc.py # Pianificazione emozionale
+│   │
+│   ├── 📁 knowledge/        # Sistema RAG avanzato
+│   │   ├── parsers/         # Parser documenti (PDF, TXT, MD)
+│   │   ├── chunker.py       # Text chunking
+│   │   ├── embeddings.py    # Multi-vector store
+│   │   ├── retrieval.py     # Retrieval gerarchico
+│   │   ├── query_rewriter.py
+│   │   ├── context_assembler.py
+│   │   └── base.py          # Facade KnowledgeBase
+│   │
+│   ├── 📁 style/            # Motore consistenza stilistica
+│   │   ├── profile.py       # Profili di stile
+│   │   └── enforcement.py   # Applicazione stile
+│   │
+│   ├── 📁 refinement/       # Pipeline raffinamento iterativo
+│   │   ├── quality.py       # Valutazione qualità
+│   │   └── pipeline.py      # Pipeline di raffinamento
+│   │
+│   ├── 📁 characters/       # Framework sviluppo personaggi
+│   │   ├── profile.py       # Profili personaggi
+│   │   └── dialogue.py      # Generazione dialoghi
+│   │
+│   ├── 📁 genre/            # Template per genere
+│   │   ├── templates.py     # Template base
+│   │   └── genres.py        # Generi specifici
+│   │
+│   └── 📁 technical/        # Supporto contenuti tecnici
+│       ├── citations.py     # Gestione citazioni
+│       ├── verification.py  # Verifica fatti
+│       └── structure.py     # Struttura accademica
+│
+├── 📁 tests/                # Test suite
+│   ├── test_narrative.py
+│   ├── test_genre.py
+│   └── test_technical.py
+│
 ├── 📁 checkpoints/          # Checkpoint e cache (auto-generata)
 │   ├── state.json          # Stato generazione
 │   ├── chapter_001.json    # Capitoli individuali
 │   └── kb_cache/           # Cache Knowledge Base
-│       └── index.pkl
+│
 └── 📁 examples/             # Esempi di utilizzo
     ├── basic_usage.sh
     └── with_context.sh
 ```
+
+### Novità v2.0 - Architettura Modulare
+
+La versione 2.0 introduce una completa ristrutturazione architetturale:
+
+| Sistema | Descrizione | Componenti |
+|---------|-------------|------------|
+| **Narrative Memory** | Memoria a lungo termine per coerenza narrativa | EventsStore, EntityRegistry, RelationsGraph |
+| **Advanced RAG** | Retrieval semantico multi-vettoriale | MultiVectorStore, HierarchicalRetriever |
+| **Style Engine** | Consistenza stilistica automatica | StyleProfile, StyleValidator, StyleCorrector |
+| **Refinement Pipeline** | Miglioramento iterativo della qualità | QualityAssessor, ProseRefiner |
+| **Character Framework** | Sviluppo e consistenza personaggi | CharacterProfile, DialogueGenerator |
+| **Genre Templates** | Template specifici per genere | Thriller, Romance, Fantasy, Mystery, etc. |
+| **Technical Support** | Supporto contenuti accademici/tecnici | CitationManager, FactVerification |
 
 ---
 
