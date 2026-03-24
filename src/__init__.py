@@ -147,6 +147,9 @@ from src.book_writer import (
     generate_book,
 )
 
+# CLI
+from src.cli import main as cli_main
+
 
 __all__ = [
     # Version
@@ -257,4 +260,7 @@ __all__ = [
     "BookGenerationResult",
     "ProfessionalBookWriter",
     "generate_book",
+    
+    # CLI
+    "cli_main",
 ]

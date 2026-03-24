@@ -422,6 +422,7 @@ Supporta qualsiasi provider con API compatibile OpenAI:
 ```
 BookWriterAI/
 ├── 📄 ebooks.py              # Entry point legacy (monolitico)
+├── 📄 generate_book.py       # Entry point v2.0 (API modulare) ⭐
 ├── 📄 requirements.txt       # Dipendenze Python
 ├── 📄 README.md             # Questo file
 ├── 📄 ARCHITECTURE.md       # Documentazione architetturale
@@ -431,6 +432,7 @@ BookWriterAI/
 ├── 📁 src/                  # Architettura modulare v2.0
 │   ├── 📄 __init__.py       # Package exports
 │   ├── 📄 book_writer.py    # API principale
+│   ├── 📄 cli.py            # Command Line Interface
 │   │
 │   ├── 📁 core/             # Infrastruttura core
 │   │   ├── exceptions.py    # Gerarchia eccezioni
